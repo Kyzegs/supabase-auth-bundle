@@ -17,6 +17,13 @@ jobs:
       matrix:
         php: [ '8.3', '8.4' ]
         dependencies: [ 'lowest', 'highest' ]
+        # Lowest-deps are resolved against the minimum PHP only: the oldest
+        # allowed dependency versions predate PHP 8.4 and emit engine-level
+        # deprecations there (implicit-nullable params, E_STRICT) that the
+        # strict phpunit config turns into failures. They are clean on 8.3.
+        exclude:
+          - php: '8.4'
+            dependencies: 'lowest'
     steps:
       - uses: actions/checkout@v4
 
