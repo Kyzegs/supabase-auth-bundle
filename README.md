@@ -50,8 +50,10 @@ when@test:
 | `test_mode`         | `false`          | Swap the handler for one accepting `{prefix}{identifier}` tokens. |
 | `test_token_prefix` | `test-user-`     | Bearer-token prefix recognised in test mode.                      |
 
-Invalid configuration (a non-URL `url`, an unsupported algorithm, a negative
-`jwks_ttl`/`leeway`) fails fast at container compile time.
+Invalid configuration (an unsupported algorithm, a negative `jwks_ttl`/`leeway`)
+fails fast at container compile time. The `url` is validated at runtime instead,
+so an `%env(SUPABASE_URL)%` value — which is unresolved during compilation — is
+accepted; a non-http(s) URL is rejected on first token verification.
 
 ## Wiring the firewall
 

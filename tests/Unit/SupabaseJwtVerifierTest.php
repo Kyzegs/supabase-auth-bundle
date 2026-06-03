@@ -86,6 +86,14 @@ final class SupabaseJwtVerifierTest extends TestCase
         $verifier->verify('whatever');
     }
 
+    public function testRejectsNonHttpUrlAtRuntime(): void
+    {
+        $verifier = new SupabaseJwtVerifier(new MockHttpClient(), new ArrayAdapter(), new MockClock(), 'not-a-url');
+
+        $this->expectException(InvalidTokenException::class);
+        $verifier->verify('whatever');
+    }
+
     public function testRejectsTokenMissingMandatoryClaims(): void
     {
         // No `exp` claim — must be rejected even though signature is valid.

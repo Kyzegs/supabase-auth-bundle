@@ -87,6 +87,12 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
             throw new InvalidTokenException('Supabase URL is not configured. Set SUPABASE_URL.');
         }
 
+        // The URL is validated here, not in the bundle configuration, so that an
+        // unresolved "%env(SUPABASE_URL)%" placeholder is accepted at compile time.
+        if (!\in_array(parse_url($this->supabaseUrl, PHP_URL_SCHEME), ['http', 'https'], true)) {
+            throw new InvalidTokenException(sprintf('Supabase URL must be an absolute http(s) URL, got "%s".', $this->supabaseUrl));
+        }
+
         $issuer = rtrim($this->supabaseUrl, '/') . self::SUPABASE_ISSUER_SUFFIX;
         $jwksUrl = $issuer . '/.well-known/jwks.json';
 

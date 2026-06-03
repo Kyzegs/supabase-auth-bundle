@@ -44,10 +44,13 @@ final class BundleIntegrationTest extends TestCase
         );
     }
 
-    public function testRejectsNonUrlConfiguration(): void
+    public function testAcceptsEnvVarUrl(): void
     {
-        $this->expectException(InvalidConfigurationException::class);
-        $this->bootContainer(['url' => 'not-a-url']);
+        // Regression: an "%env()%" url is unresolved at compile time, so the
+        // container must still build. URL format is validated at runtime instead.
+        $container = $this->bootContainer(['url' => '%env(SUPABASE_URL)%']);
+
+        self::assertTrue($container->has('supabase_auth.token_handler'));
     }
 
     public function testRejectsUnsupportedAlgorithmConfiguration(): void
