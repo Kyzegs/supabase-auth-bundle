@@ -1,0 +1,9 @@
+# Keep the distributed package lean: development-only files are stripped from
+# the Composer dist archive (`composer require` / `--prefer-dist`).
+/.github               export-ignore
+/tests                 export-ignore
+/.gitattributes        export-ignore
+/.gitignore            export-ignore
+/.phpunit.result.cache export-ignore
+/phpunit.xml.dist      export-ignore
+/phpstan.neon.dist     export-ignore
