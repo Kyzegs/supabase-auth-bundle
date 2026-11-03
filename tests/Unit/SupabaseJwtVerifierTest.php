@@ -190,6 +190,29 @@ final class SupabaseJwtVerifierTest extends TestCase
         $this->verifier()->verify($token);
     }
 
+    public function testRejectsTokenWithoutSubject(): void
+    {
+        $token = $this->sign(['iss' => self::ISSUER, 'exp' => time() + 3600]);
+
+        $this->expectException(InvalidTokenException::class);
+        $this->verifier()->verify($token);
+    }
+
+    public function testRejectsTokenWithoutAudienceWhenConfigured(): void
+    {
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
+
+        $this->expectException(InvalidTokenException::class);
+        $this->verifier(audience: 'authenticated')->verify($token);
+    }
+
+    public function testAcceptsTokenWithoutAudienceWhenNotConfigured(): void
+    {
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
+
+        self::assertSame('x', $this->verifier()->verify($token)['sub']);
+    }
+
     public function testHonoursLeewayForRecentlyExpiredToken(): void
     {
         // Expired 5s ago, but a 30s leeway keeps it valid (clock skew tolerance).

@@ -54,7 +54,7 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
      *
      * @var list<string>
      */
-    private const array MANDATORY_CLAIMS = ['iss', 'exp'];
+    private const array MANDATORY_CLAIMS = ['iss', 'exp', 'sub'];
 
     /**
      * Map of supported algorithm identifiers to their implementations.
@@ -132,7 +132,8 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
         }
 
         try {
-            $this->buildClaimChecker($issuer)->check($claims, self::MANDATORY_CLAIMS);
+            // The checker skips a claim that is absent, so a configured audience must also be mandatory.
+            $this->buildClaimChecker($issuer)->check($claims, null === $this->audience ? self::MANDATORY_CLAIMS : [...self::MANDATORY_CLAIMS, 'aud']);
         } catch (\Throwable $e) {
             throw new InvalidTokenException('Token claim check failed.', 0, $e);
         }
