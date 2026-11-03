@@ -60,11 +60,11 @@ when@test:
 | `leeway`            | `60`             | Allowed clock skew (seconds) for the `exp`, `iat` and `nbf` checks, so a token also stays accepted this long past its expiry. At `0`, a token used right after it was issued answers `401` if this server's clock runs behind Supabase's. |
 | `audience`          | `null`           | When set, the token must have an `aud` claim containing this value (Supabase uses `authenticated`). |
 | `algorithms`        | `[RS256, ES256]` | Signature algorithms accepted from the JWKS. Must be a subset of `RS256`, `ES256`. |
-| `test_mode`         | `false`          | Swap the handler for one accepting `{prefix}{identifier}` tokens. Must be a literal boolean, and is refused in the `prod` environment. |
+| `test_mode`         | `false`          | Swap the handler for one accepting `{prefix}{identifier}` tokens. Must be a literal boolean, and is only allowed in the `test` environment. |
 | `test_token_prefix` | `test-user-`     | Bearer-token prefix recognised in test mode.                      |
 
 Invalid configuration (an unsupported algorithm, a negative `jwks_ttl`/`leeway`,
-`test_mode` from an `%env()%` value or in `prod`) fails fast at container compile
+`test_mode` from an `%env()%` value or outside `test`) fails fast at container compile
 time. The `url` is validated at runtime instead,
 so an `%env(SUPABASE_URL)%` value — which is unresolved during compilation — is
 accepted; a non-http(s) URL fails on first token verification.
@@ -140,9 +140,8 @@ With `test_mode: true`, send `Authorization: Bearer test-user-{identifier}` and
 the bundle calls your resolver with `['sub' => '{identifier}']` — no real JWT
 required.
 
-Test mode lets any caller sign in as any user, so keep it under `when@test`. The
-bundle refuses it in the `prod` environment, but cannot recognise a production
-environment you named something else.
+Test mode lets any caller sign in as any user, so the bundle only allows it in the
+`test` environment. Set it under `when@test`.
 
 ## License
 

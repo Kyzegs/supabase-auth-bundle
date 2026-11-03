@@ -14,6 +14,7 @@ use Kyzegs\SupabaseAuthBundle\Security\SupabaseAccessTokenHandler;
 use Kyzegs\SupabaseAuthBundle\Security\TestAccessTokenHandler;
 use Kyzegs\SupabaseAuthBundle\Tests\Functional\App\StubJwksEndpoint;
 use Kyzegs\SupabaseAuthBundle\Tests\Functional\App\StubUserResolver;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -90,10 +91,21 @@ final class BundleIntegrationTest extends TestCase
         }
     }
 
-    public function testRefusesTestModeInProd(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function environmentsThatMustNotAllowTestMode(): iterable
+    {
+        yield 'prod' => ['prod'];
+        yield 'dev' => ['dev'];
+        yield 'a production environment under another name' => ['production'];
+    }
+
+    #[DataProvider('environmentsThatMustNotAllowTestMode')]
+    public function testRefusesTestModeOutsideTheTestEnvironment(string $environment): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->bootContainer(['test_mode' => true], 'prod');
+        $this->bootContainer(['test_mode' => true], $environment);
     }
 
     public function testBootsInProdWithoutTestMode(): void

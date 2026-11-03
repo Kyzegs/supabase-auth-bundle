@@ -60,7 +60,7 @@ final class SupabaseAuthBundle extends AbstractBundle
                     ->end()
                     ->booleanNode('test_mode')
                         ->defaultFalse()
-                        ->info('When true, the public token handler accepts "{prefix}{identifier}" tokens instead of real JWTs. Must be a literal boolean, and is refused in the "prod" environment.')
+                        ->info('When true, the public token handler accepts "{prefix}{identifier}" tokens instead of real JWTs. Must be a literal boolean, and is only allowed in the "test" environment.')
                     ->end()
                     ->scalarNode('test_token_prefix')
                         ->defaultValue('test-user-')
@@ -81,8 +81,8 @@ final class SupabaseAuthBundle extends AbstractBundle
         }
 
         // The test handler lets any caller sign in as any user.
-        if ($config['test_mode'] && 'prod' === $container->env()) {
-            throw new InvalidConfigurationException('"supabase_auth.test_mode" cannot be enabled in the "prod" environment. Set it under "when@test".');
+        if ($config['test_mode'] && 'test' !== $container->env()) {
+            throw new InvalidConfigurationException('"supabase_auth.test_mode" can only be enabled in the "test" environment. Set it under "when@test".');
         }
 
         $services = $container->services()
