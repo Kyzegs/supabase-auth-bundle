@@ -48,6 +48,8 @@ final class SupabaseAuthBundle extends AbstractBundle
 
     public function configure(DefinitionConfigurator $definition): void
     {
+        $algorithms = array_keys(SupabaseJwtVerifier::SUPPORTED_ALGORITHMS);
+
         $definition
             ->rootNode()
                 ->children()
@@ -72,13 +74,13 @@ final class SupabaseAuthBundle extends AbstractBundle
                     ->end()
                     ->arrayNode('algorithms')
                         ->scalarPrototype()->end()
-                        ->defaultValue(['RS256', 'ES256'])
+                        ->defaultValue($algorithms)
                         ->requiresAtLeastOneElement()
                         ->validate()
-                            ->ifTrue(static fn (array $v): bool => [] !== array_diff($v, ['RS256', 'ES256']))
-                            ->thenInvalid('Unsupported algorithm(s) in "algorithms"; supported: RS256, ES256. Got %s.')
+                            ->ifTrue(static fn (array $v): bool => [] !== array_filter($v, static fn (mixed $a): bool => !\in_array($a, $algorithms, true)))
+                            ->thenInvalid(sprintf('Unsupported algorithm(s) in "algorithms"; supported: %s. Got %%s.', implode(', ', $algorithms)))
                         ->end()
-                        ->info('Signature algorithms accepted from the JWKS. Supported: RS256, ES256.')
+                        ->info(sprintf('Signature algorithms accepted from the JWKS. Supported: %s.', implode(', ', $algorithms)))
                     ->end()
                     ->booleanNode('test_mode')
                         ->defaultFalse()

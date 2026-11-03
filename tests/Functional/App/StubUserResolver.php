@@ -12,12 +12,8 @@ final class StubUserResolver implements SupabaseUserResolverInterface
 {
     public function resolve(array $claims): ?UserInterface
     {
-        $sub = isset($claims['sub']) ? (string) $claims['sub'] : '';
+        $sub = $claims['sub'] ?? null;
 
-        if ('' === $sub) {
-            return null;
-        }
-
-        return new InMemoryUser($sub);
+        return \is_string($sub) && '' !== $sub ? new InMemoryUser($sub) : null;
     }
 }

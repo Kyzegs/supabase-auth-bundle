@@ -57,11 +57,9 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
     private const array MANDATORY_CLAIMS = ['iss', 'exp', 'sub'];
 
     /**
-     * Map of supported algorithm identifiers to their implementations.
-     *
      * @var array<string, class-string<Algorithm>>
      */
-    private const array SUPPORTED_ALGORITHMS = [
+    public const array SUPPORTED_ALGORITHMS = [
         'RS256' => RS256::class,
         'ES256' => ES256::class,
     ];
