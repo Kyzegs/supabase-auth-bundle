@@ -7,6 +7,7 @@ namespace Kyzegs\SupabaseAuthBundle\Tests\Unit;
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWK;
 use Jose\Component\KeyManagement\JWKFactory;
+use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\Algorithm\RS256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
@@ -46,6 +47,70 @@ final class SupabaseJwtVerifierTest extends TestCase
 
         self::assertSame('11111111-1111-1111-1111-111111111111', $claims['sub']);
         self::assertSame(self::ISSUER, $claims['iss']);
+    }
+
+    public function testVerifiesEs256TokenAgainstASupabaseShapedJwks(): void
+    {
+        $key = JWKFactory::createECKey('P-256', ['alg' => 'ES256', 'kid' => 'ec-key']);
+        $jwks = json_encode(['keys' => [$key->toPublic()->all() + ['use' => 'sig', 'key_ops' => ['verify']]]], JSON_THROW_ON_ERROR);
+
+        $verifier = new SupabaseJwtVerifier(new MockHttpClient(new MockResponse($jwks)), new ArrayAdapter(), new MockClock(), self::SUPABASE_URL);
+
+        self::assertSame('x', $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600], $key))['sub']);
+    }
+
+    public function testRejectsAlgorithmOutsideTheConfiguredList(): void
+    {
+        $verifier = new SupabaseJwtVerifier(
+            new MockHttpClient(new MockResponse($this->jwksJson)),
+            new ArrayAdapter(),
+            new MockClock(),
+            self::SUPABASE_URL,
+            algorithms: ['ES256'],
+        );
+
+        $this->expectException(InvalidTokenException::class);
+        $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
+    }
+
+    public function testAcceptsUrlWithTrailingSlash(): void
+    {
+        $verifier = new SupabaseJwtVerifier(new MockHttpClient(new MockResponse($this->jwksJson)), new ArrayAdapter(), new MockClock(), self::SUPABASE_URL . '/');
+
+        self::assertSame('x', $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]))['sub']);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function claimsThatMustNotBeInTheFuture(): iterable
+    {
+        yield 'iat' => ['iat'];
+        yield 'nbf' => ['nbf'];
+    }
+
+    #[DataProvider('claimsThatMustNotBeInTheFuture')]
+    public function testRejectsTokenFromTheFuture(string $claim): void
+    {
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, $claim => time() + 60]);
+
+        $this->expectException(InvalidTokenException::class);
+        $this->verifier()->verify($token);
+    }
+
+    public function testHonoursLeewayForTokenIssuedAheadOfOurClock(): void
+    {
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
+
+        $verifier = new SupabaseJwtVerifier(
+            new MockHttpClient(new MockResponse($this->jwksJson)),
+            new ArrayAdapter(),
+            new MockClock(),
+            self::SUPABASE_URL,
+            leeway: 30,
+        );
+
+        self::assertSame('x', $verifier->verify($token)['sub']);
     }
 
     public function testRejectsExpiredToken(): void
@@ -231,12 +296,12 @@ final class SupabaseJwtVerifierTest extends TestCase
     private function sign(array $claims, ?JWK $key = null): string
     {
         $key ??= $this->privateKey;
-        $builder = new JWSBuilder(new AlgorithmManager([new RS256()]));
+        $builder = new JWSBuilder(new AlgorithmManager([new RS256(), new ES256()]));
 
         $jws = $builder
             ->create()
             ->withPayload(json_encode($claims, JSON_THROW_ON_ERROR))
-            ->addSignature($key, ['alg' => 'RS256'])
+            ->addSignature($key, ['alg' => $key->get('alg')])
             ->build();
 
         return (new CompactSerializer())->serialize($jws, 0);
