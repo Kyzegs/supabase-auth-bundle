@@ -53,7 +53,20 @@ when@test:
 Invalid configuration (an unsupported algorithm, a negative `jwks_ttl`/`leeway`)
 fails fast at container compile time. The `url` is validated at runtime instead,
 so an `%env(SUPABASE_URL)%` value — which is unresolved during compilation — is
-accepted; a non-http(s) URL is rejected on first token verification.
+accepted; a non-http(s) URL fails on first token verification.
+
+## Failure responses
+
+| Cause | Response |
+|-------|----------|
+| The token is malformed, has an invalid signature or fails claim checks | `401` |
+| The JWKS cannot be fetched (5 s timeout) or parsed, or holds no keys | `503` |
+| `url` is empty or not an absolute http(s) URL, or no valid `algorithms` are configured | `503` |
+
+A `503` is a `ServiceUnavailableHttpException` with a generic message and the
+cause as its previous exception, so clients can tell it apart from a rejected
+token, and Symfony logs it at critical level. These failures are not cached: once
+the JWKS is available again, the next request succeeds.
 
 ## Wiring the firewall
 

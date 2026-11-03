@@ -11,11 +11,12 @@ use Jose\Component\Signature\Algorithm\RS256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
 use Kyzegs\SupabaseAuthBundle\Exception\InvalidTokenException;
+use Kyzegs\SupabaseAuthBundle\Exception\VerificationUnavailableException;
 use Kyzegs\SupabaseAuthBundle\Service\SupabaseJwtVerifier;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Clock\MockClock;
-use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
@@ -78,19 +79,40 @@ final class SupabaseJwtVerifierTest extends TestCase
         $this->verifier()->verify('not-a-jwt');
     }
 
+    /**
+     * Well-formed enough to reach the verifier, which throws instead of returning false.
+     *
+     * @return iterable<string, array{string}>
+     */
+    public static function tokensTheJwsVerifierThrowsOn(): iterable
+    {
+        $encode = static fn (string $json): string => rtrim(strtr(base64_encode($json), '+/', '-_'), '=');
+
+        yield 'no payload' => [$encode('{"alg":"RS256"}') . '..' . $encode('signature')];
+        yield 'no alg header' => [$encode('{}') . '.' . $encode('{}') . '.' . $encode('signature')];
+        yield 'alg not accepted' => [$encode('{"alg":"HS256"}') . '.' . $encode('{}') . '.' . $encode('signature')];
+    }
+
+    #[DataProvider('tokensTheJwsVerifierThrowsOn')]
+    public function testRejectsTokenTheJwsVerifierThrowsOn(string $token): void
+    {
+        $this->expectException(InvalidTokenException::class);
+        $this->verifier()->verify($token);
+    }
+
     public function testThrowsWhenUrlNotConfigured(): void
     {
         $verifier = new SupabaseJwtVerifier(new MockHttpClient(), new ArrayAdapter(), new MockClock(), '');
 
-        $this->expectException(InvalidTokenException::class);
+        $this->expectException(VerificationUnavailableException::class);
         $verifier->verify('whatever');
     }
 
-    public function testRejectsNonHttpUrlAtRuntime(): void
+    public function testThrowsOnNonHttpUrlAtRuntime(): void
     {
         $verifier = new SupabaseJwtVerifier(new MockHttpClient(), new ArrayAdapter(), new MockClock(), 'not-a-url');
 
-        $this->expectException(InvalidTokenException::class);
+        $this->expectException(VerificationUnavailableException::class);
         $verifier->verify('whatever');
     }
 
@@ -130,10 +152,24 @@ final class SupabaseJwtVerifierTest extends TestCase
         $this->verifier(audience: 'someone-else')->verify($token);
     }
 
-    public function testWrapsJwksHttpFailure(): void
+    /**
+     * @return iterable<string, array{MockResponse}>
+     */
+    public static function unusableJwksResponses(): iterable
+    {
+        yield 'network failure' => [new MockResponse(info: ['error' => 'network down'])];
+        yield 'not found' => [new MockResponse('{}', ['http_code' => 404])];
+        yield 'server error' => [new MockResponse('{}', ['http_code' => 503])];
+        yield 'not json' => [new MockResponse('not json')];
+        yield 'no keys member' => [new MockResponse('{}')];
+        yield 'empty key set' => [new MockResponse('{"keys":[]}')];
+    }
+
+    #[DataProvider('unusableJwksResponses')]
+    public function testUnusableJwksIsUnavailableAndNotCached(MockResponse $failure): void
     {
         $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(static fn (): never => throw new TransportException('network down')),
+            new MockHttpClient([$failure, new MockResponse($this->jwksJson)]),
             new ArrayAdapter(),
             new MockClock(),
             self::SUPABASE_URL,
@@ -141,26 +177,39 @@ final class SupabaseJwtVerifierTest extends TestCase
 
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
-        $this->expectException(InvalidTokenException::class);
-        $verifier->verify($token);
+        try {
+            $verifier->verify($token);
+            self::fail('Expected a VerificationUnavailableException.');
+        } catch (VerificationUnavailableException) {
+        }
+
+        self::assertSame('x', $verifier->verify($token)['sub']);
     }
 
-    public function testWrapsMalformedJwksResponse(): void
+    public function testCachesUsableJwks(): void
     {
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(new MockResponse('not json')),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-        );
-
+        $http = new MockHttpClient(new MockResponse($this->jwksJson));
+        $verifier = new SupabaseJwtVerifier($http, new ArrayAdapter(), new MockClock(), self::SUPABASE_URL);
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
-        $this->expectException(InvalidTokenException::class);
         $verifier->verify($token);
+        $verifier->verify($token);
+
+        self::assertSame(1, $http->getRequestsCount());
     }
 
-    public function testRejectsUnsupportedAlgorithm(): void
+    public function testLimitsTheJwksRequestDuration(): void
+    {
+        $response = new MockResponse($this->jwksJson);
+        $verifier = new SupabaseJwtVerifier(new MockHttpClient($response), new ArrayAdapter(), new MockClock(), self::SUPABASE_URL);
+
+        $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
+
+        self::assertEquals(5, $response->getRequestOptions()['timeout']);
+        self::assertEquals(5, $response->getRequestOptions()['max_duration']);
+    }
+
+    public function testThrowsOnUnsupportedAlgorithm(): void
     {
         $verifier = new SupabaseJwtVerifier(
             new MockHttpClient(new MockResponse($this->jwksJson)),
@@ -172,7 +221,7 @@ final class SupabaseJwtVerifierTest extends TestCase
 
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
-        $this->expectException(InvalidTokenException::class);
+        $this->expectException(VerificationUnavailableException::class);
         $verifier->verify($token);
     }
 

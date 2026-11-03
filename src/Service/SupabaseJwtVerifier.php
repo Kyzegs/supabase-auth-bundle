@@ -19,10 +19,10 @@ use Jose\Component\Signature\JWSVerifier;
 use Jose\Component\Signature\Serializer\CompactSerializer;
 use Kyzegs\SupabaseAuthBundle\Contract\SupabaseJwtVerifierInterface;
 use Kyzegs\SupabaseAuthBundle\Exception\InvalidTokenException;
+use Kyzegs\SupabaseAuthBundle\Exception\VerificationUnavailableException;
 use Psr\Clock\ClockInterface;
 use Symfony\Contracts\Cache\CacheInterface;
 use Symfony\Contracts\Cache\ItemInterface;
-use Symfony\Contracts\HttpClient\Exception\ExceptionInterface as HttpExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /**
@@ -36,14 +36,17 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  *   5. check the standard claims (exp, iss, and optionally aud), requiring
  *      `iss` and `exp` to be present.
  *
- * Every failure path is normalised to {@see InvalidTokenException} so callers
- * never have to reason about the underlying JOSE/HTTP exception zoo.
+ * Failures are normalised so callers never have to reason about the underlying
+ * JOSE/HTTP exception zoo: the token's fault is {@see InvalidTokenException}, the
+ * server's (JWKS or configuration) is {@see VerificationUnavailableException}.
  *
  * @see https://supabase.com/docs/guides/auth/jwts
  */
 final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
 {
     private const string SUPABASE_ISSUER_SUFFIX = '/auth/v1';
+
+    private const int JWKS_TIMEOUT_SECONDS = 5;
 
     /**
      * Claims that MUST be present on every Supabase token. A token missing one
@@ -84,13 +87,13 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
     public function verify(#[\SensitiveParameter] string $token): array
     {
         if ('' === trim($this->supabaseUrl)) {
-            throw new InvalidTokenException('Supabase URL is not configured. Set SUPABASE_URL.');
+            throw new VerificationUnavailableException('Supabase URL is not configured. Set SUPABASE_URL.');
         }
 
         // The URL is validated here, not in the bundle configuration, so that an
         // unresolved "%env(SUPABASE_URL)%" placeholder is accepted at compile time.
         if (!\in_array(parse_url($this->supabaseUrl, PHP_URL_SCHEME), ['http', 'https'], true)) {
-            throw new InvalidTokenException(sprintf('Supabase URL must be an absolute http(s) URL, got "%s".', $this->supabaseUrl));
+            throw new VerificationUnavailableException(sprintf('Supabase URL must be an absolute http(s) URL, got "%s".', $this->supabaseUrl));
         }
 
         $issuer = rtrim($this->supabaseUrl, '/') . self::SUPABASE_ISSUER_SUFFIX;
@@ -105,7 +108,15 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
         $jwks = $this->getJwks($jwksUrl);
 
         $verifier = new JWSVerifier($this->buildAlgorithmManager());
-        if (false === $verifier->verifyWithKeySet($jws, $jwks, 0)) {
+
+        try {
+            $verified = $verifier->verifyWithKeySet($jws, $jwks, 0);
+        } catch (\Throwable $e) {
+            // Thrown for a token without payload or with an unaccepted "alg" header.
+            throw new InvalidTokenException('Invalid token signature.', 0, $e);
+        }
+
+        if (false === $verified) {
             throw new InvalidTokenException('Invalid token signature.');
         }
 
@@ -132,13 +143,13 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
     private function buildAlgorithmManager(): AlgorithmManager
     {
         if ([] === $this->algorithms) {
-            throw new InvalidTokenException('No signature algorithms configured.');
+            throw new VerificationUnavailableException('No signature algorithms configured.');
         }
 
         $instances = [];
         foreach ($this->algorithms as $algorithm) {
             if (!isset(self::SUPPORTED_ALGORITHMS[$algorithm])) {
-                throw new InvalidTokenException(sprintf('Unsupported signature algorithm "%s".', $algorithm));
+                throw new VerificationUnavailableException(sprintf('Unsupported signature algorithm "%s".', $algorithm));
             }
 
             $instances[] = new (self::SUPPORTED_ALGORITHMS[$algorithm])();
@@ -171,15 +182,25 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
                 function (ItemInterface $item) use ($url): JWKSet {
                     $item->expiresAfter($this->jwksTtl);
 
-                    $response = $this->http->request('GET', $url);
+                    // Failures are not cached, so every request of an outage waits this long.
+                    // "timeout" only limits idle time; "max_duration" limits the whole request.
+                    $response = $this->http->request('GET', $url, [
+                        'timeout' => self::JWKS_TIMEOUT_SECONDS,
+                        'max_duration' => self::JWKS_TIMEOUT_SECONDS,
+                    ]);
 
-                    return JWKSet::createFromJson($response->getContent());
+                    $jwks = JWKSet::createFromJson($response->getContent());
+
+                    // Thrown from this callback, so the empty set is not cached either.
+                    if (0 === $jwks->count()) {
+                        throw new \UnexpectedValueException('The key set is empty.');
+                    }
+
+                    return $jwks;
                 }
             );
-        } catch (HttpExceptionInterface $e) {
-            throw new InvalidTokenException('Unable to fetch the Supabase JWKS.', 0, $e);
         } catch (\Throwable $e) {
-            throw new InvalidTokenException('Invalid Supabase JWKS response.', 0, $e);
+            throw new VerificationUnavailableException('Unable to load the Supabase JWKS.', 0, $e);
         }
     }
 }
