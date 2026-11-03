@@ -41,8 +41,7 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
     private const int JWKS_TIMEOUT_SECONDS = 5;
 
     /**
-     * Claims that MUST be present on every Supabase token. A token missing one
-     * of these is rejected before the value checks run.
+     * Supabase Auth sets these on every access token, and resolvers rely on `sub`.
      *
      * @var list<string>
      */

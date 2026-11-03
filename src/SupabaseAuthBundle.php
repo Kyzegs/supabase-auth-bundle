@@ -91,8 +91,6 @@ final class SupabaseAuthBundle extends AbstractBundle
             ->autoconfigure()
             ->private();
 
-        // Config values are injected straight into the service definitions —
-        // no intermediate container parameters are leaked into the application.
         $services->set(SupabaseJwtVerifier::class)
             ->arg('$supabaseUrl', $config['url'])
             ->arg('$jwksTtl', $config['jwks_ttl'])
@@ -107,9 +105,7 @@ final class SupabaseAuthBundle extends AbstractBundle
         $services->set(TestAccessTokenHandler::class)
             ->arg('$prefix', $config['test_token_prefix']);
 
-        // Expose the active handler under a stable, public id so the
-        // application firewall can reference it. The alias points at the test
-        // handler when `test_mode` is enabled.
+        // Applications point their firewall at this id, whichever handler is active.
         $handler = $config['test_mode'] ? TestAccessTokenHandler::class : SupabaseAccessTokenHandler::class;
 
         $services->alias('supabase_auth.token_handler', $handler)->public();

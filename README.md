@@ -134,6 +134,10 @@ services:
 
 Returning `null` from `resolve()` produces an authentication failure.
 
+Anonymous sign-ins produce valid tokens too, with `aud` set to `authenticated` like
+any other user, so `audience` does not keep them out. If your project enables them,
+check the `is_anonymous` claim in the resolver.
+
 ## Testing your application
 
 With `test_mode: true`, send `Authorization: Bearer test-user-{identifier}` and
