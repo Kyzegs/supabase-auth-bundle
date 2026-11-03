@@ -17,7 +17,10 @@ use Kyzegs\SupabaseAuthBundle\Service\SupabaseJwtVerifier;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
+use Symfony\Component\Cache\Adapter\ChainAdapter;
+use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\Clock\MockClock;
+use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 use Symfony\Contracts\Cache\CacheInterface;
@@ -338,6 +341,24 @@ final class SupabaseJwtVerifierTest extends TestCase
 
         $clock->sleep(2);
         $verifier->verify($token);
+        self::assertSame(2, $http->getRequestsCount());
+    }
+
+    public function testNeverCachesTheJwksWithATtlOfZero(): void
+    {
+        $directory = sys_get_temp_dir() . '/supabase-auth-bundle-test-' . uniqid('', true);
+        $cache = new ChainAdapter([new ArrayAdapter(), new FilesystemAdapter(directory: $directory)]);
+        $http = new MockHttpClient([new MockResponse($this->jwksJson), new MockResponse($this->jwksJson)]);
+        $verifier = new SupabaseJwtVerifier($http, $cache, new MockClock(), self::SUPABASE_URL, jwksTtl: 0);
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
+
+        try {
+            $verifier->verify($token);
+            $verifier->verify($token);
+        } finally {
+            (new Filesystem())->remove($directory);
+        }
+
         self::assertSame(2, $http->getRequestsCount());
     }
 

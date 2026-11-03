@@ -196,6 +196,11 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
                 throw new \UnexpectedValueException('The key set is empty.');
             }
 
+            // ChainAdapter stores expiresAfter(0) as "never expires", which would trust a revoked key forever.
+            if (0 === $this->jwksTtl) {
+                return $jwks;
+            }
+
             return $this->cache->get($key, function (ItemInterface $item) use ($jwks): JWKSet {
                 $item->expiresAfter($this->jwksTtl);
 
