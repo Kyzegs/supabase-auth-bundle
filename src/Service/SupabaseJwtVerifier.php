@@ -177,29 +177,40 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
 
     private function getJwks(string $url): JWKSet
     {
+        $key = sprintf('supabase_jwks_%s', md5($url));
+
         try {
-            return $this->cache->get(
-                sprintf('supabase_jwks_%s', md5($url)),
-                function (ItemInterface $item) use ($url): JWKSet {
-                    $item->expiresAfter($this->jwksTtl);
+            // The fetch must stay out of the cache callback: under FPM that callback holds the
+            // stampede lock, and an outage would queue each worker behind the previous timeouts.
+            $cached = $this->cache->get($key, static function (ItemInterface $item, bool &$save): null {
+                $save = false;
 
-                    // Failures are not cached, so every request of an outage waits this long.
-                    // "timeout" only limits idle time; "max_duration" limits the whole request.
-                    $response = $this->http->request('GET', $url, [
-                        'timeout' => self::JWKS_TIMEOUT_SECONDS,
-                        'max_duration' => self::JWKS_TIMEOUT_SECONDS,
-                    ]);
+                return null;
+            });
 
-                    $jwks = JWKSet::createFromJson($response->getContent());
+            if ($cached instanceof JWKSet) {
+                return $cached;
+            }
 
-                    // Thrown from this callback, so the empty set is not cached either.
-                    if (0 === $jwks->count()) {
-                        throw new \UnexpectedValueException('The key set is empty.');
-                    }
+            // Failures are not cached, so every request of an outage waits this long.
+            // "timeout" only limits idle time; "max_duration" limits the whole request.
+            $response = $this->http->request('GET', $url, [
+                'timeout' => self::JWKS_TIMEOUT_SECONDS,
+                'max_duration' => self::JWKS_TIMEOUT_SECONDS,
+            ]);
 
-                    return $jwks;
-                }
-            );
+            $jwks = JWKSet::createFromJson($response->getContent());
+
+            // Thrown before the cache write, so the empty set is not cached either.
+            if (0 === $jwks->count()) {
+                throw new \UnexpectedValueException('The key set is empty.');
+            }
+
+            return $this->cache->get($key, function (ItemInterface $item) use ($jwks): JWKSet {
+                $item->expiresAfter($this->jwksTtl);
+
+                return $jwks;
+            });
         } catch (\Throwable $e) {
             throw new VerificationUnavailableException('Unable to load the Supabase JWKS.', 0, $e);
         }

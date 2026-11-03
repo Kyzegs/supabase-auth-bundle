@@ -20,6 +20,8 @@ use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Clock\MockClock;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
+use Symfony\Contracts\Cache\CacheInterface;
+use Symfony\Contracts\Cache\ItemInterface;
 
 final class SupabaseJwtVerifierTest extends TestCase
 {
@@ -284,6 +286,59 @@ final class SupabaseJwtVerifierTest extends TestCase
         $verifier->verify($token);
 
         self::assertSame(1, $http->getRequestsCount());
+    }
+
+    public function testFetchesTheJwksOutsideTheCacheCallback(): void
+    {
+        // Under FPM a cache callback holds the stampede lock. Fetching inside it queued
+        // every worker of an outage behind the timeouts of the workers before it.
+        /** @var bool $computing */
+        $computing = false;
+        $inner = new ArrayAdapter();
+        $cache = $this->createStub(CacheInterface::class);
+        // Not an arrow function: that would capture $computing by value, and the assertion could never fail.
+        $cache->method('get')->willReturnCallback(static function (string $key, callable $callback) use ($inner, &$computing): mixed {
+            return $inner->get(
+                $key,
+                static function (ItemInterface $item, bool &$save) use ($callback, &$computing): mixed {
+                    $computing = true;
+
+                    try {
+                        return $callback($item, $save);
+                    } finally {
+                        $computing = false;
+                    }
+                },
+            );
+        });
+
+        $http = new MockHttpClient(function () use (&$computing): MockResponse {
+            self::assertFalse($computing);
+
+            return new MockResponse($this->jwksJson);
+        });
+        $verifier = new SupabaseJwtVerifier($http, $cache, new MockClock(), self::SUPABASE_URL);
+
+        $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
+
+        self::assertSame(1, $http->getRequestsCount());
+    }
+
+    public function testRefetchesTheJwksOnlyAfterTheConfiguredTtl(): void
+    {
+        $clock = new MockClock();
+        $http = new MockHttpClient([new MockResponse($this->jwksJson), new MockResponse($this->jwksJson)]);
+        $verifier = new SupabaseJwtVerifier($http, new ArrayAdapter(clock: $clock), $clock, self::SUPABASE_URL, jwksTtl: 60);
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
+
+        $verifier->verify($token);
+        $clock->sleep(59);
+        $verifier->verify($token);
+        self::assertSame(1, $http->getRequestsCount());
+
+        $clock->sleep(2);
+        $verifier->verify($token);
+        self::assertSame(2, $http->getRequestsCount());
     }
 
     public function testLimitsTheJwksRequestDuration(): void
