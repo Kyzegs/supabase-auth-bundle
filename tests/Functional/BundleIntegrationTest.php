@@ -178,7 +178,7 @@ final class BundleIntegrationTest extends TestCase
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('abc', $response->getContent());
-        self::assertSame(401, $this->request('abc')->getStatusCode());
+        self::assertSame(401, $this->request('a-token-longer-than-the-prefix')->getStatusCode());
     }
 
     /**

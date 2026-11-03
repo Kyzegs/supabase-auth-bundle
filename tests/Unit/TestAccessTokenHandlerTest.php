@@ -29,10 +29,14 @@ final class TestAccessTokenHandlerTest extends TestCase
 
     public function testRejectsTokenWithoutPrefix(): void
     {
-        $handler = new TestAccessTokenHandler($this->createStub(SupabaseUserResolverInterface::class), 'test-user-');
+        // The resolver finds a user and the token outlasts the prefix, so only the prefix check can reject it.
+        $resolver = $this->createStub(SupabaseUserResolverInterface::class);
+        $resolver->method('resolve')->willReturn(new InMemoryUser('abc'));
+
+        $handler = new TestAccessTokenHandler($resolver, 'test-user-');
 
         $this->expectException(AuthenticationException::class);
-        $handler->getUserBadgeFrom('abc');
+        $handler->getUserBadgeFrom('a-token-longer-than-the-prefix');
     }
 
     public function testThrowsWhenUserNotResolved(): void
