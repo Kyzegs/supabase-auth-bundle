@@ -97,10 +97,33 @@ final class SupabaseJwtVerifierTest extends TestCase
     #[DataProvider('claimsThatMustNotBeInTheFuture')]
     public function testRejectsTokenFromTheFuture(string $claim): void
     {
-        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, $claim => time() + 60]);
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, $claim => time() + 120]);
 
         $this->expectException(InvalidTokenException::class);
         $this->verifier()->verify($token);
+    }
+
+    public function testToleratesClockSkewByDefault(): void
+    {
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
+
+        self::assertSame('x', $this->verifier()->verify($token)['sub']);
+    }
+
+    public function testLeewayOfZeroIsStrict(): void
+    {
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
+
+        $verifier = new SupabaseJwtVerifier(
+            new MockHttpClient(new MockResponse($this->jwksJson)),
+            new ArrayAdapter(),
+            new MockClock(),
+            self::SUPABASE_URL,
+            leeway: 0,
+        );
+
+        $this->expectException(InvalidTokenException::class);
+        $verifier->verify($token);
     }
 
     public function testHonoursLeewayForTokenIssuedAheadOfOurClock(): void
@@ -120,7 +143,7 @@ final class SupabaseJwtVerifierTest extends TestCase
 
     public function testRejectsExpiredToken(): void
     {
-        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() - 10]);
+        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() - 120]);
 
         $this->expectException(InvalidTokenException::class);
         $this->verifier()->verify($token);

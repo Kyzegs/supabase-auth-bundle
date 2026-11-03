@@ -44,7 +44,7 @@ return [
 supabase_auth:
     url: '%env(SUPABASE_URL)%'   # required, absolute http(s) URL
     jwks_ttl: 600                # optional, JWKS cache TTL in seconds
-    leeway: 0                    # optional, allowed clock skew in seconds
+    leeway: 60                   # optional, allowed clock skew in seconds
     audience: 'authenticated'    # optional, required `aud` claim value
     algorithms: ['RS256', 'ES256'] # optional, accepted signature algorithms
 
@@ -57,7 +57,7 @@ when@test:
 |---------------------|------------------|--------------------------------------------------------------------|
 | `url`               | _(required)_     | Supabase project URL, e.g. `https://xxxx.supabase.co`. Must be an absolute http(s) URL. |
 | `jwks_ttl`          | `600`            | Seconds to cache the JWKS (matches the Supabase edge cache). Supabase advises against caching longer: a revoked key stays trusted until both this cache and its own 10-minute edge cache have expired. |
-| `leeway`            | `0`              | Allowed clock skew (seconds) for the `exp`, `iat` and `nbf` checks. At `0`, a token used right after it was issued answers `401` if this server's clock runs behind Supabase's, so consider a few seconds in production. |
+| `leeway`            | `60`             | Allowed clock skew (seconds) for the `exp`, `iat` and `nbf` checks, so a token also stays accepted this long past its expiry. At `0`, a token used right after it was issued answers `401` if this server's clock runs behind Supabase's. |
 | `audience`          | `null`           | When set, the token must have an `aud` claim containing this value (Supabase uses `authenticated`). |
 | `algorithms`        | `[RS256, ES256]` | Signature algorithms accepted from the JWKS. Must be a subset of `RS256`, `ES256`. |
 | `test_mode`         | `false`          | Swap the handler for one accepting `{prefix}{identifier}` tokens. Must be a literal boolean, and is refused in the `prod` environment. |

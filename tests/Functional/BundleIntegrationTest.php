@@ -103,6 +103,16 @@ final class BundleIntegrationTest extends TestCase
         self::assertInstanceOf(SupabaseAccessTokenHandler::class, $container->get('supabase_auth.token_handler'));
     }
 
+    public function testFirewallToleratesClockSkewByDefault(): void
+    {
+        // Regression: at a leeway of 0, a fresh token whose iat is ahead of this server's clock
+        // answered 401, which clients treat as a dead session.
+        $jwks = $this->jwksEndpoint($this->bootContainer([]));
+        [$jwks->body, $token] = $this->jwksAndToken(['sub' => 'user-1', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
+
+        self::assertSame(200, $this->request($token)->getStatusCode());
+    }
+
     public function testFirewallLetsAValidTokenThrough(): void
     {
         $jwks = $this->jwksEndpoint($this->bootContainer([]));
