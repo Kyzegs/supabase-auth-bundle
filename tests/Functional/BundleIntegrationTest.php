@@ -76,6 +76,33 @@ final class BundleIntegrationTest extends TestCase
         $this->bootContainer(['leeway' => -1]);
     }
 
+    public function testRefusesEnvVarTestMode(): void
+    {
+        // Regression: the placeholder is a truthy string at compile time, so with the
+        // same env expression used elsewhere, X=0 still selected the test handler.
+        $_SERVER['SUPABASE_TEST_MODE'] = '0';
+
+        try {
+            $this->expectException(InvalidConfigurationException::class);
+            $this->bootContainer(['test_mode' => '%env(bool:SUPABASE_TEST_MODE)%', 'test_token_prefix' => '%env(bool:SUPABASE_TEST_MODE)%']);
+        } finally {
+            unset($_SERVER['SUPABASE_TEST_MODE']);
+        }
+    }
+
+    public function testRefusesTestModeInProd(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->bootContainer(['test_mode' => true], 'prod');
+    }
+
+    public function testBootsInProdWithoutTestMode(): void
+    {
+        $container = $this->bootContainer([], 'prod');
+
+        self::assertInstanceOf(SupabaseAccessTokenHandler::class, $container->get('supabase_auth.token_handler'));
+    }
+
     public function testFirewallLetsAValidTokenThrough(): void
     {
         $jwks = $this->jwksEndpoint($this->bootContainer([]));

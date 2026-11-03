@@ -10,6 +10,7 @@ use Kyzegs\SupabaseAuthBundle\Security\TestAccessTokenHandler;
 use Kyzegs\SupabaseAuthBundle\Service\SupabaseJwtVerifier;
 use Psr\Clock\ClockInterface;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
@@ -96,6 +97,16 @@ final class SupabaseAuthBundle extends AbstractBundle
      */
     public function loadExtension(array $config, ContainerConfigurator $container, ContainerBuilder $builder): void
     {
+        // At compile time an %env()% value is a truthy placeholder string, whatever it resolves to later.
+        if (!\is_bool($config['test_mode'])) {
+            throw new InvalidConfigurationException('"supabase_auth.test_mode" must be a literal boolean, not an %env()% value. Set it under "when@test".');
+        }
+
+        // The test handler lets any caller sign in as any user.
+        if ($config['test_mode'] && 'prod' === $container->env()) {
+            throw new InvalidConfigurationException('"supabase_auth.test_mode" cannot be enabled in the "prod" environment. Set it under "when@test".');
+        }
+
         $services = $container->services()
             ->defaults()
             ->autowire()
