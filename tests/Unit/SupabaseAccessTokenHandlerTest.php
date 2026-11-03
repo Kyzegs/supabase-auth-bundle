@@ -7,9 +7,11 @@ namespace Kyzegs\SupabaseAuthBundle\Tests\Unit;
 use Kyzegs\SupabaseAuthBundle\Contract\SupabaseJwtVerifierInterface;
 use Kyzegs\SupabaseAuthBundle\Contract\SupabaseUserResolverInterface;
 use Kyzegs\SupabaseAuthBundle\Exception\InvalidTokenException;
+use Kyzegs\SupabaseAuthBundle\Exception\VerificationUnavailableException;
 use Kyzegs\SupabaseAuthBundle\Security\SupabaseAccessTokenHandler;
 use Kyzegs\SupabaseAuthBundle\Tests\Fixtures\InMemoryUser;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Symfony\Component\Security\Core\User\UserInterface;
 
@@ -38,6 +40,35 @@ final class SupabaseAccessTokenHandlerTest extends TestCase
 
         $this->expectException(AuthenticationException::class);
         $handler->getUserBadgeFrom('bad-token');
+    }
+
+    public function testUnexpectedVerifierFailureIsAnAuthenticationFailure(): void
+    {
+        $verifier = $this->createStub(SupabaseJwtVerifierInterface::class);
+        $verifier->method('verify')->willThrowException(new \TypeError('crafted input'));
+
+        $handler = new SupabaseAccessTokenHandler($verifier, $this->resolver(new InMemoryUser('x')));
+
+        $this->expectException(AuthenticationException::class);
+        $handler->getUserBadgeFrom('crafted-token');
+    }
+
+    public function testUnavailableVerificationAnswers503WithoutExposingTheCause(): void
+    {
+        $cause = new VerificationUnavailableException('Supabase URL must be an absolute http(s) URL, got "secret".');
+        $verifier = $this->createStub(SupabaseJwtVerifierInterface::class);
+        $verifier->method('verify')->willThrowException($cause);
+
+        $handler = new SupabaseAccessTokenHandler($verifier, $this->resolver(new InMemoryUser('x')));
+
+        try {
+            $handler->getUserBadgeFrom('valid-token');
+            self::fail('Expected a ServiceUnavailableHttpException.');
+        } catch (ServiceUnavailableHttpException $e) {
+            self::assertSame(503, $e->getStatusCode());
+            self::assertStringNotContainsString('secret', $e->getMessage());
+            self::assertSame($cause, $e->getPrevious());
+        }
     }
 
     public function testThrowsWhenUserNotResolved(): void
