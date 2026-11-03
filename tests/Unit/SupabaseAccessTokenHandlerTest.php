@@ -33,13 +33,18 @@ final class SupabaseAccessTokenHandlerTest extends TestCase
 
     public function testThrowsWhenTokenInvalid(): void
     {
+        $cause = new InvalidTokenException('bad');
         $verifier = $this->createStub(SupabaseJwtVerifierInterface::class);
-        $verifier->method('verify')->willThrowException(new InvalidTokenException('bad'));
+        $verifier->method('verify')->willThrowException($cause);
 
         $handler = new SupabaseAccessTokenHandler($verifier, $this->resolver(new InMemoryUser('x')));
 
-        $this->expectException(AuthenticationException::class);
-        $handler->getUserBadgeFrom('bad-token');
+        try {
+            $handler->getUserBadgeFrom('bad-token');
+            self::fail('Expected an AuthenticationException.');
+        } catch (AuthenticationException $e) {
+            self::assertSame($cause, $e->getPrevious());
+        }
     }
 
     public function testUnexpectedVerifierFailureIsAnAuthenticationFailure(): void

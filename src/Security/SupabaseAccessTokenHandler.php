@@ -40,7 +40,7 @@ final class SupabaseAccessTokenHandler implements AccessTokenHandlerInterface
             // message can reach the response body, so the cause stays in $previous.
             throw new ServiceUnavailableHttpException(null, 'Token verification is temporarily unavailable.', $e);
         } catch (\Throwable $e) {
-            throw new AuthenticationException('Invalid token.');
+            throw new AuthenticationException('Invalid token.', 0, $e);
         }
 
         $user = $this->userResolver->resolve($claims);
