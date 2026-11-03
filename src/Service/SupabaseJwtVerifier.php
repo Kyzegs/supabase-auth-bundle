@@ -67,10 +67,10 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
         private readonly CacheInterface $cache,
         private readonly ClockInterface $clock,
         private readonly string $supabaseUrl,
-        private readonly int $jwksTtl = 600,
-        private readonly array $algorithms = ['RS256', 'ES256'],
-        private readonly int $leeway = 60,
-        private readonly ?string $audience = null,
+        private readonly int $jwksTtl,
+        private readonly array $algorithms,
+        private readonly int $leeway,
+        private readonly ?string $audience,
     ) {
     }
 

@@ -21,7 +21,7 @@ final class TestAccessTokenHandlerTest extends TestCase
             ->with(['sub' => 'abc'])
             ->willReturn($user);
 
-        $handler = new TestAccessTokenHandler($resolver);
+        $handler = new TestAccessTokenHandler($resolver, 'test-user-');
         $badge = $handler->getUserBadgeFrom('test-user-abc');
 
         self::assertSame('abc', $badge->getUserIdentifier());
@@ -29,7 +29,7 @@ final class TestAccessTokenHandlerTest extends TestCase
 
     public function testRejectsTokenWithoutPrefix(): void
     {
-        $handler = new TestAccessTokenHandler($this->createStub(SupabaseUserResolverInterface::class));
+        $handler = new TestAccessTokenHandler($this->createStub(SupabaseUserResolverInterface::class), 'test-user-');
 
         $this->expectException(AuthenticationException::class);
         $handler->getUserBadgeFrom('abc');
@@ -40,7 +40,7 @@ final class TestAccessTokenHandlerTest extends TestCase
         $resolver = $this->createStub(SupabaseUserResolverInterface::class);
         $resolver->method('resolve')->willReturn(null);
 
-        $handler = new TestAccessTokenHandler($resolver);
+        $handler = new TestAccessTokenHandler($resolver, 'test-user-');
 
         $this->expectException(AuthenticationException::class);
         $handler->getUserBadgeFrom('test-user-ghost');

@@ -16,6 +16,7 @@ use Kyzegs\SupabaseAuthBundle\Exception\VerificationUnavailableException;
 use Kyzegs\SupabaseAuthBundle\Service\SupabaseJwtVerifier;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Clock\ClockInterface;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Cache\Adapter\ChainAdapter;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
@@ -25,6 +26,7 @@ use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 use Symfony\Contracts\Cache\CacheInterface;
 use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class SupabaseJwtVerifierTest extends TestCase
 {
@@ -59,28 +61,20 @@ final class SupabaseJwtVerifierTest extends TestCase
         $key = JWKFactory::createECKey('P-256', ['alg' => 'ES256', 'kid' => 'ec-key']);
         $jwks = json_encode(['keys' => [$key->toPublic()->all() + ['use' => 'sig', 'key_ops' => ['verify']]]], JSON_THROW_ON_ERROR);
 
-        $verifier = new SupabaseJwtVerifier(new MockHttpClient(new MockResponse($jwks)), new ArrayAdapter(), new MockClock(), self::SUPABASE_URL);
+        $verifier = $this->verifier(new MockHttpClient(new MockResponse($jwks)));
 
         self::assertSame('x', $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600], $key))['sub']);
     }
 
     public function testRejectsAlgorithmOutsideTheConfiguredList(): void
     {
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(new MockResponse($this->jwksJson)),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-            algorithms: ['ES256'],
-        );
-
         $this->expectException(InvalidTokenException::class);
-        $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
+        $this->verifier(algorithms: ['ES256'])->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
     }
 
     public function testAcceptsUrlWithTrailingSlash(): void
     {
-        $verifier = new SupabaseJwtVerifier(new MockHttpClient(new MockResponse($this->jwksJson)), new ArrayAdapter(), new MockClock(), self::SUPABASE_URL . '/');
+        $verifier = $this->verifier(url: self::SUPABASE_URL . '/');
 
         self::assertSame('x', $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]))['sub']);
     }
@@ -103,42 +97,19 @@ final class SupabaseJwtVerifierTest extends TestCase
         $this->verifier()->verify($token);
     }
 
-    public function testToleratesClockSkewByDefault(): void
-    {
-        $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
-
-        self::assertSame('x', $this->verifier()->verify($token)['sub']);
-    }
-
     public function testLeewayOfZeroIsStrict(): void
     {
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
 
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(new MockResponse($this->jwksJson)),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-            leeway: 0,
-        );
-
         $this->expectException(InvalidTokenException::class);
-        $verifier->verify($token);
+        $this->verifier(leeway: 0)->verify($token);
     }
 
     public function testHonoursLeewayForTokenIssuedAheadOfOurClock(): void
     {
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600, 'iat' => time() + 5]);
 
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(new MockResponse($this->jwksJson)),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-            leeway: 30,
-        );
-
-        self::assertSame('x', $verifier->verify($token)['sub']);
+        self::assertSame('x', $this->verifier(leeway: 30)->verify($token)['sub']);
     }
 
     public function testRejectsExpiredToken(): void
@@ -195,18 +166,14 @@ final class SupabaseJwtVerifierTest extends TestCase
 
     public function testThrowsWhenUrlNotConfigured(): void
     {
-        $verifier = new SupabaseJwtVerifier(new MockHttpClient(), new ArrayAdapter(), new MockClock(), '');
-
         $this->expectException(VerificationUnavailableException::class);
-        $verifier->verify('whatever');
+        $this->verifier(url: '')->verify('whatever');
     }
 
     public function testThrowsOnNonHttpUrlAtRuntime(): void
     {
-        $verifier = new SupabaseJwtVerifier(new MockHttpClient(), new ArrayAdapter(), new MockClock(), 'not-a-url');
-
         $this->expectException(VerificationUnavailableException::class);
-        $verifier->verify('whatever');
+        $this->verifier(url: 'not-a-url')->verify('whatever');
     }
 
     public function testRejectsTokenMissingMandatoryClaims(): void
@@ -246,15 +213,7 @@ final class SupabaseJwtVerifierTest extends TestCase
         // Expired 5s ago, but a 30s leeway keeps it valid (clock skew tolerance).
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() - 5]);
 
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(new MockResponse($this->jwksJson)),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-            leeway: 30,
-        );
-
-        self::assertSame('x', $verifier->verify($token)['sub']);
+        self::assertSame('x', $this->verifier(leeway: 30)->verify($token)['sub']);
     }
 
     public function testEnforcesAudienceWhenConfigured(): void
@@ -284,12 +243,7 @@ final class SupabaseJwtVerifierTest extends TestCase
     #[DataProvider('unusableJwksResponses')]
     public function testUnusableJwksIsUnavailableAndNotCached(MockResponse $failure): void
     {
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient([$failure, new MockResponse($this->jwksJson)]),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-        );
+        $verifier = $this->verifier(new MockHttpClient([$failure, new MockResponse($this->jwksJson)]));
 
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
@@ -305,7 +259,7 @@ final class SupabaseJwtVerifierTest extends TestCase
     public function testCachesUsableJwks(): void
     {
         $http = new MockHttpClient(new MockResponse($this->jwksJson));
-        $verifier = new SupabaseJwtVerifier($http, new ArrayAdapter(), new MockClock(), self::SUPABASE_URL);
+        $verifier = $this->verifier($http);
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
         $verifier->verify($token);
@@ -343,9 +297,8 @@ final class SupabaseJwtVerifierTest extends TestCase
 
             return new MockResponse($this->jwksJson);
         });
-        $verifier = new SupabaseJwtVerifier($http, $cache, new MockClock(), self::SUPABASE_URL);
 
-        $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
+        $this->verifier($http, $cache)->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
 
         self::assertSame(1, $http->getRequestsCount());
     }
@@ -354,7 +307,7 @@ final class SupabaseJwtVerifierTest extends TestCase
     {
         $clock = new MockClock();
         $http = new MockHttpClient([new MockResponse($this->jwksJson), new MockResponse($this->jwksJson)]);
-        $verifier = new SupabaseJwtVerifier($http, new ArrayAdapter(clock: $clock), $clock, self::SUPABASE_URL, jwksTtl: 60);
+        $verifier = $this->verifier($http, new ArrayAdapter(clock: $clock), $clock, jwksTtl: 60);
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
         $verifier->verify($token);
@@ -372,7 +325,7 @@ final class SupabaseJwtVerifierTest extends TestCase
         $directory = sys_get_temp_dir() . '/supabase-auth-bundle-test-' . uniqid('', true);
         $cache = new ChainAdapter([new ArrayAdapter(), new FilesystemAdapter(directory: $directory)]);
         $http = new MockHttpClient([new MockResponse($this->jwksJson), new MockResponse($this->jwksJson)]);
-        $verifier = new SupabaseJwtVerifier($http, $cache, new MockClock(), self::SUPABASE_URL, jwksTtl: 0);
+        $verifier = $this->verifier($http, $cache, jwksTtl: 0);
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
         try {
@@ -388,9 +341,8 @@ final class SupabaseJwtVerifierTest extends TestCase
     public function testLimitsTheJwksRequestDuration(): void
     {
         $response = new MockResponse($this->jwksJson);
-        $verifier = new SupabaseJwtVerifier(new MockHttpClient($response), new ArrayAdapter(), new MockClock(), self::SUPABASE_URL);
 
-        $verifier->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
+        $this->verifier(new MockHttpClient($response))->verify($this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]));
 
         self::assertEquals(5, $response->getRequestOptions()['timeout']);
         self::assertEquals(5, $response->getRequestOptions()['max_duration']);
@@ -398,18 +350,10 @@ final class SupabaseJwtVerifierTest extends TestCase
 
     public function testThrowsOnUnsupportedAlgorithm(): void
     {
-        $verifier = new SupabaseJwtVerifier(
-            new MockHttpClient(new MockResponse($this->jwksJson)),
-            new ArrayAdapter(),
-            new MockClock(),
-            self::SUPABASE_URL,
-            algorithms: ['HS256'],
-        );
-
         $token = $this->sign(['sub' => 'x', 'iss' => self::ISSUER, 'exp' => time() + 3600]);
 
         $this->expectException(VerificationUnavailableException::class);
-        $verifier->verify($token);
+        $this->verifier(algorithms: ['HS256'])->verify($token);
     }
 
     /**
@@ -429,10 +373,28 @@ final class SupabaseJwtVerifierTest extends TestCase
         return (new CompactSerializer())->serialize($jws, 0);
     }
 
-    private function verifier(?string $audience = null): SupabaseJwtVerifier
-    {
-        $http = new MockHttpClient(new MockResponse($this->jwksJson));
-
-        return new SupabaseJwtVerifier($http, new ArrayAdapter(), new MockClock(), self::SUPABASE_URL, audience: $audience);
+    /**
+     * @param list<string> $algorithms
+     */
+    private function verifier(
+        ?HttpClientInterface $http = null,
+        ?CacheInterface $cache = null,
+        ?ClockInterface $clock = null,
+        string $url = self::SUPABASE_URL,
+        int $jwksTtl = 600,
+        array $algorithms = ['RS256', 'ES256'],
+        int $leeway = 0,
+        ?string $audience = null,
+    ): SupabaseJwtVerifier {
+        return new SupabaseJwtVerifier(
+            $http ?? new MockHttpClient(new MockResponse($this->jwksJson)),
+            $cache ?? new ArrayAdapter(),
+            $clock ?? new MockClock(),
+            $url,
+            $jwksTtl,
+            $algorithms,
+            $leeway,
+            $audience,
+        );
     }
 }
