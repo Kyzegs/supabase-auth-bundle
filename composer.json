@@ -57,15 +57,7 @@
         }
     },
     "config": {
-        "sort-packages": true,
-        "allow-plugins": {
-            "symfony/flex": true
-        }
-    },
-    "extra": {
-        "symfony": {
-            "require": "^7.2|^8.0"
-        }
+        "sort-packages": true
     },
     "scripts": {
         "test": "phpunit",
