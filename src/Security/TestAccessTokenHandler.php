@@ -15,7 +15,8 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  * by passing the identifier as the `sub` claim to the user resolver.
  *
  * Enable via the bundle's `test_mode` option so functional tests can
- * authenticate without minting real Supabase JWTs.
+ * authenticate without minting real Supabase JWTs. It lets any caller sign in as
+ * any user, which is why the bundle refuses that option in the "prod" environment.
  */
 final class TestAccessTokenHandler implements AccessTokenHandlerInterface
 {

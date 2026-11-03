@@ -28,14 +28,6 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 /**
  * Verifies JWTs issued by Supabase Auth using the project's JWKS.
  *
- * The verification pipeline is, in order:
- *   1. parse the compact-serialized JWS;
- *   2. fetch (and cache) the project JWKS;
- *   3. verify the signature against the JWKS with the allowed algorithms;
- *   4. decode the payload;
- *   5. check the standard claims (exp, iss, and optionally aud), requiring
- *      `iss` and `exp` to be present.
- *
  * Failures are normalised so callers never have to reason about the underlying
  * JOSE/HTTP exception zoo: the token's fault is {@see InvalidTokenException}, the
  * server's (JWKS or configuration) is {@see VerificationUnavailableException}.

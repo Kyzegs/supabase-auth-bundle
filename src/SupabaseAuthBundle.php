@@ -8,39 +8,15 @@ use Kyzegs\SupabaseAuthBundle\Contract\SupabaseJwtVerifierInterface;
 use Kyzegs\SupabaseAuthBundle\Security\SupabaseAccessTokenHandler;
 use Kyzegs\SupabaseAuthBundle\Security\TestAccessTokenHandler;
 use Kyzegs\SupabaseAuthBundle\Service\SupabaseJwtVerifier;
-use Psr\Clock\ClockInterface;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
-use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
-
 /**
- * SupabaseAuthBundle — stateless authentication via Supabase-issued JWTs.
- *
- * Registers a Symfony access-token handler that verifies Supabase JWTs and
- * resolves the application user via a {@see Contract\SupabaseUserResolverInterface}
- * you provide. Uses the modern AbstractBundle API (Symfony 6.1+).
- *
- * Wire the firewall to the public handler id `supabase_auth.token_handler`:
- *
- *   security:
- *     firewalls:
- *       api:
- *         access_token:
- *           token_handler: supabase_auth.token_handler
- *
- * Example configuration (config/packages/supabase_auth.yaml):
- *
- *   supabase_auth:
- *     url: '%env(SUPABASE_URL)%'
- *     jwks_ttl: 600
- *     algorithms: ['RS256', 'ES256']
- *   when@test:
- *     supabase_auth:
- *       test_mode: true
+ * Stateless authentication via Supabase-issued JWTs. The README covers
+ * configuration and firewall wiring.
  */
 final class SupabaseAuthBundle extends AbstractBundle
 {
@@ -56,7 +32,7 @@ final class SupabaseAuthBundle extends AbstractBundle
                     ->scalarNode('url')
                         ->isRequired()
                         ->cannotBeEmpty()
-                        ->info('The Supabase project URL, e.g. https://xxxx.supabase.co (no trailing slash). Must be an absolute http(s) URL; validated at runtime so an %env()% value is accepted.')
+                        ->info('The Supabase project URL, e.g. https://xxxx.supabase.co. Must be an absolute http(s) URL; validated at runtime so an %env()% value is accepted.')
                     ->end()
                     ->integerNode('jwks_ttl')
                         ->defaultValue(600)
@@ -70,7 +46,7 @@ final class SupabaseAuthBundle extends AbstractBundle
                     ->end()
                     ->scalarNode('audience')
                         ->defaultNull()
-                        ->info('When set, the token "aud" claim must contain this value (Supabase uses "authenticated").')
+                        ->info('When set, the token must have an "aud" claim containing this value (Supabase uses "authenticated").')
                     ->end()
                     ->arrayNode('algorithms')
                         ->scalarPrototype()->end()
@@ -84,7 +60,7 @@ final class SupabaseAuthBundle extends AbstractBundle
                     ->end()
                     ->booleanNode('test_mode')
                         ->defaultFalse()
-                        ->info('When true, the public token handler accepts "{prefix}{identifier}" tokens instead of real JWTs.')
+                        ->info('When true, the public token handler accepts "{prefix}{identifier}" tokens instead of real JWTs. Must be a literal boolean, and is refused in the "prod" environment.')
                     ->end()
                     ->scalarNode('test_token_prefix')
                         ->defaultValue('test-user-')
@@ -118,7 +94,6 @@ final class SupabaseAuthBundle extends AbstractBundle
         // Config values are injected straight into the service definitions —
         // no intermediate container parameters are leaked into the application.
         $services->set(SupabaseJwtVerifier::class)
-            ->arg('$clock', service(ClockInterface::class))
             ->arg('$supabaseUrl', $config['url'])
             ->arg('$jwksTtl', $config['jwks_ttl'])
             ->arg('$algorithms', $config['algorithms'])
