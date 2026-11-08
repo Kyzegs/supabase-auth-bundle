@@ -28,14 +28,6 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 /**
  * Verifies JWTs issued by Supabase Auth using the project's JWKS.
  *
- * The verification pipeline is, in order:
- *   1. parse the compact-serialized JWS;
- *   2. fetch (and cache) the project JWKS;
- *   3. verify the signature against the JWKS with the allowed algorithms;
- *   4. decode the payload;
- *   5. check the standard claims (exp, iss, and optionally aud), requiring
- *      `iss` and `exp` to be present.
- *
  * Failures are normalised so callers never have to reason about the underlying
  * JOSE/HTTP exception zoo: the token's fault is {@see InvalidTokenException}, the
  * server's (JWKS or configuration) is {@see VerificationUnavailableException}.
@@ -49,19 +41,16 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
     private const int JWKS_TIMEOUT_SECONDS = 5;
 
     /**
-     * Claims that MUST be present on every Supabase token. A token missing one
-     * of these is rejected before the value checks run.
+     * Supabase Auth sets these on every access token, and resolvers rely on `sub`.
      *
      * @var list<string>
      */
-    private const array MANDATORY_CLAIMS = ['iss', 'exp'];
+    private const array MANDATORY_CLAIMS = ['iss', 'exp', 'sub'];
 
     /**
-     * Map of supported algorithm identifiers to their implementations.
-     *
      * @var array<string, class-string<Algorithm>>
      */
-    private const array SUPPORTED_ALGORITHMS = [
+    public const array SUPPORTED_ALGORITHMS = [
         'RS256' => RS256::class,
         'ES256' => ES256::class,
     ];
@@ -77,10 +66,10 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
         private readonly CacheInterface $cache,
         private readonly ClockInterface $clock,
         private readonly string $supabaseUrl,
-        private readonly int $jwksTtl = 600,
-        private readonly array $algorithms = ['RS256', 'ES256'],
-        private readonly int $leeway = 0,
-        private readonly ?string $audience = null,
+        private readonly int $jwksTtl,
+        private readonly array $algorithms,
+        private readonly int $leeway,
+        private readonly ?string $audience,
     ) {
     }
 
@@ -132,7 +121,8 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
         }
 
         try {
-            $this->buildClaimChecker($issuer)->check($claims, self::MANDATORY_CLAIMS);
+            // The checker skips a claim that is absent, so a configured audience must also be mandatory.
+            $this->buildClaimChecker($issuer)->check($claims, null === $this->audience ? self::MANDATORY_CLAIMS : [...self::MANDATORY_CLAIMS, 'aud']);
         } catch (\Throwable $e) {
             throw new InvalidTokenException('Token claim check failed.', 0, $e);
         }
@@ -176,29 +166,45 @@ final class SupabaseJwtVerifier implements SupabaseJwtVerifierInterface
 
     private function getJwks(string $url): JWKSet
     {
+        $key = sprintf('supabase_jwks_%s', md5($url));
+
         try {
-            return $this->cache->get(
-                sprintf('supabase_jwks_%s', md5($url)),
-                function (ItemInterface $item) use ($url): JWKSet {
-                    $item->expiresAfter($this->jwksTtl);
+            // The fetch must stay out of the cache callback: under FPM that callback holds the
+            // stampede lock, and an outage would queue each worker behind the previous timeouts.
+            $cached = $this->cache->get($key, static function (ItemInterface $item, bool &$save): null {
+                $save = false;
 
-                    // Failures are not cached, so every request of an outage waits this long.
-                    // "timeout" only limits idle time; "max_duration" limits the whole request.
-                    $response = $this->http->request('GET', $url, [
-                        'timeout' => self::JWKS_TIMEOUT_SECONDS,
-                        'max_duration' => self::JWKS_TIMEOUT_SECONDS,
-                    ]);
+                return null;
+            });
 
-                    $jwks = JWKSet::createFromJson($response->getContent());
+            if ($cached instanceof JWKSet) {
+                return $cached;
+            }
 
-                    // Thrown from this callback, so the empty set is not cached either.
-                    if (0 === $jwks->count()) {
-                        throw new \UnexpectedValueException('The key set is empty.');
-                    }
+            // Failures are not cached, so every request of an outage waits this long.
+            // "timeout" only limits idle time; "max_duration" limits the whole request.
+            $response = $this->http->request('GET', $url, [
+                'timeout' => self::JWKS_TIMEOUT_SECONDS,
+                'max_duration' => self::JWKS_TIMEOUT_SECONDS,
+            ]);
 
-                    return $jwks;
-                }
-            );
+            $jwks = JWKSet::createFromJson($response->getContent());
+
+            // Thrown before the cache write, so the empty set is not cached either.
+            if (0 === $jwks->count()) {
+                throw new \UnexpectedValueException('The key set is empty.');
+            }
+
+            // ChainAdapter stores expiresAfter(0) as "never expires", which would trust a revoked key forever.
+            if (0 === $this->jwksTtl) {
+                return $jwks;
+            }
+
+            return $this->cache->get($key, function (ItemInterface $item) use ($jwks): JWKSet {
+                $item->expiresAfter($this->jwksTtl);
+
+                return $jwks;
+            });
         } catch (\Throwable $e) {
             throw new VerificationUnavailableException('Unable to load the Supabase JWKS.', 0, $e);
         }

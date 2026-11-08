@@ -11,17 +11,18 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
 
 /**
  * Test-only token handler. Accepts a bearer token of the form
- * "{prefix}{identifier}" (default prefix "test-user-") and resolves the user
- * by passing the identifier as the `sub` claim to the user resolver.
+ * "{prefix}{identifier}" and resolves the user by passing the identifier as the
+ * `sub` claim to the user resolver.
  *
  * Enable via the bundle's `test_mode` option so functional tests can
- * authenticate without minting real Supabase JWTs.
+ * authenticate without minting real Supabase JWTs. It lets any caller sign in as
+ * any user, which is why the bundle only allows that option in the "test" environment.
  */
 final class TestAccessTokenHandler implements AccessTokenHandlerInterface
 {
     public function __construct(
         private SupabaseUserResolverInterface $userResolver,
-        private string $prefix = 'test-user-',
+        private string $prefix,
     ) {
     }
 
